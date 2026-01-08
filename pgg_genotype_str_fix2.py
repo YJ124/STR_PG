@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-pgg_genotype_str.py  (JSONL 频率支持版，支持单端/双端 FASTQ)
+pgg_genotype_str.py  (JSONL frequency support version, supports single/paired-end FASTQ)
 ---------------------------------------------------------
-一个简化、可跑通的小型 STR 分型器（二倍体），支持：
-- webSTR 风格 TSV 频率表（locus_id, L, AFR/EUR/.../ALL）
-- JSONL/JSON 频率表（多种常见嵌套结构，见 load_freq_auto 注释）
-- 混血先验 (--popmix "EUR=0.6,AFR=0.4")
-- 极端先验 (--extreme "locus_id=L")
-- 单端 FASTQ (--fq) 或双端 FASTQ (--fq1 + --fq2)
+A simplified, runnable small-scale STR genotyper (diploid), supporting:
+- webSTR style TSV frequency tables (locus_id, L, AFR/EUR/.../ALL)
+- JSONL/JSON frequency tables (various common nested structures, see load_freq_auto comments)
+- Admixture priors (--popmix "EUR=0.6,AFR=0.4")
+- Extreme priors (--extreme "locus_id=L")
+- Single-end FASTQ (--fq) or Paired-end FASTQ (--fq1 + --fq2)
 
-输出：每个位点一行 TSV，含 GT/GQ、like/post 两套分数、先验调试列、APL_json。
-该脚本用于“验证先验是否进入打分链路”，非生产优化版本。
+Output: One line per locus in TSV format, containing GT/GQ, like/post scores, prior debug columns, APL_json.
+This script is used to "verify if priors are entering the scoring pipeline", not a production-optimized version.
 """
 import sys, os, gzip, json, math, argparse, csv, random
 from collections import defaultdict
@@ -19,18 +19,18 @@ from collections import defaultdict
 random.seed(1)
 
 def _cap_gq_from_delta(delta):
-    """把 Δ=post_best-post2 转成 GQ；对 inf/NaN 安全，并且封顶 99。"""
+    """Convert Δ=post_best-post2 to GQ; safe for inf/NaN, and capped at 99."""
     if not math.isfinite(delta):
         return 99
     if delta < 0:
         delta = 0.0
-    # 给个上限，避免数值过大（10 * 9.9 = 99）
+    # Set an upper limit to avoid excessive values (10 * 9.9 = 99)
     delta = min(delta, 9.9)
     return int(round(10.0 * delta))
 
-# ------------------ FASTQ 读取 ------------------
+# ------------------ FASTQ Reading ------------------
 def read_fastq(path):
-    """读取单个 FASTQ(.gz)：yield (name, seq, qual)"""
+    """Read single FASTQ(.gz): yield (name, seq, qual)"""
     op = gzip.open if str(path).endswith(".gz") else open
     with op(path, "rt") as f:
         while True:
@@ -46,32 +46,32 @@ def read_fastq(path):
 
 def load_reads_from_args(args):
     """
-    根据命令行参数加载 reads：
-      - 单端：--fq
-      - 双端：--fq1 + --fq2
+    Load reads based on command line arguments:
+      - Single-end: --fq
+      - Paired-end: --fq1 + --fq2
 
-    双端模式下，R1 和 R2 中的每条 read 都视作独立 read 参与 SW 打分。
-    为了区分，name 会在末尾补上 /1 或 /2（若原本没有的话）。
+    In paired-end mode, every read in R1 and R2 is treated as an independent read for SW scoring.
+    To distinguish them, /1 or /2 is appended to the name (if not already present).
     """
     if args.fq and (args.fq1 or args.fq2):
-        print("[ERROR] 不能同时使用 --fq 和 --fq1/--fq2，请二选一。", file=sys.stderr)
+        print("[ERROR] Cannot use both --fq and --fq1/--fq2, please choose one.", file=sys.stderr)
         sys.exit(1)
     if (args.fq1 and not args.fq2) or (args.fq2 and not args.fq1):
-        print("[ERROR] 双端模式需要同时提供 --fq1 和 --fq2。", file=sys.stderr)
+        print("[ERROR] Paired-end mode requires both --fq1 and --fq2.", file=sys.stderr)
         sys.exit(1)
     if not args.fq and not (args.fq1 and args.fq2):
-        print("[ERROR] 请使用 --fq（单端）或者 --fq1 + --fq2（双端）其一。", file=sys.stderr)
+        print("[ERROR] Please use either --fq (single-end) or --fq1 + --fq2 (paired-end).", file=sys.stderr)
         sys.exit(1)
 
     reads = []
     if args.fq:
-        # 单端
-        print(f"[INFO] 使用单端 FASTQ：{args.fq}", file=sys.stderr)
+        # Single-end
+        print(f"[INFO] Using single-end FASTQ: {args.fq}", file=sys.stderr)
         for name, seq, qual in read_fastq(args.fq):
             reads.append((name, seq, qual))
     else:
-        # 双端
-        print(f"[INFO] 使用双端 FASTQ：R1={args.fq1}  R2={args.fq2}", file=sys.stderr)
+        # Paired-end
+        print(f"[INFO] Using paired-end FASTQ: R1={args.fq1}  R2={args.fq2}", file=sys.stderr)
         # R1
         for name, seq, qual in read_fastq(args.fq1):
             if not name.endswith("/1"):
@@ -84,12 +84,12 @@ def load_reads_from_args(args):
             reads.append((name, seq, qual))
 
     if not reads:
-        print("[ERROR] 未从 FASTQ 中读到任何 read，文件是否为空？", file=sys.stderr)
+        print("[ERROR] No reads loaded from FASTQ, is the file empty?", file=sys.stderr)
         sys.exit(2)
-    print(f"[INFO] 共加载 reads 数量：{len(reads)}", file=sys.stderr)
+    print(f"[INFO] Total reads loaded: {len(reads)}", file=sys.stderr)
     return reads
 
-# ------------------ GFA 解析（X STR 行） ------------------
+# ------------------ GFA Parsing (X STR lines) ------------------
 def parse_gfa_strs(path):
     loci = []  # list of dict
     with open(path, "r") as f:
@@ -112,7 +112,7 @@ def parse_gfa_strs(path):
                 })
     return loci
 
-# ------------------ 频率读取（自动检测 TSV / JSONL / JSON） ------------------
+# ------------------ Frequency Reading (Auto-detect TSV / JSONL / JSON) ------------------
 POPS = ["AFR","EUR","EAS","AMR","SAS","ALL"]
 
 import csv, json
@@ -142,18 +142,18 @@ def load_freq_tsv(path):
     return tab
 
 def _ingest_row_like(tab, obj):
-    """尽可能鲁棒地从单个 JSON 对象 obj 提取频率。
-    支持：
-      A) 扁平: {"locus_id": "...", "L": 10, "ALL": 0.1, "EUR": 0.2, ...}
+    """Extract frequencies from a single JSON object 'obj' as robustly as possible.
+    Supports:
+      A) Flat: {"locus_id": "...", "L": 10, "ALL": 0.1, "EUR": 0.2, ...}
       B) pop->L: {"locus_id":"...", "freq": {"ALL":{"10":0.1,"11":0.2}, "EUR":{...}}}
       C) L->pop: {"locus_id":"...", "L_freq": {"10":{"ALL":0.1,"EUR":0.2}, "11":{...}}}
-      D) 容器键别名: "priors"/"allele_freqs"/"pops"
+      D) Container key aliases: "priors"/"allele_freqs"/"pops"
     """
     lid = (obj.get("locus_id") or obj.get("pointer_id") or obj.get("id") or obj.get("locus") or "").strip()
     if not lid:
         return
 
-    # A) 扁平
+    # A) Flat
     if "L" in obj and any(k in obj for k in POPS):
         try:
             L = int(obj["L"])
@@ -170,7 +170,7 @@ def _ingest_row_like(tab, obj):
         except:
             pass
 
-    # B/C/D) 容器
+    # B/C/D) Container
     cand_container_keys = ["freq","L_freq","priors","allele_freqs","pops"]
     container = None
     for k in cand_container_keys:
@@ -178,7 +178,7 @@ def _ingest_row_like(tab, obj):
             container = obj[k]
             break
     if container is None:
-        # 也可能是 pop 键直接是 {L:val}
+        # Could also be that pop keys are directly {L:val}
         has_pop_key = any((k in obj and isinstance(obj[k], dict)) for k in POPS)
         if has_pop_key:
             for p in POPS:
@@ -190,7 +190,7 @@ def _ingest_row_like(tab, obj):
                         except:
                             pass
             return
-        # 或 obj 本身就是 {L:{pop:val}}
+        # Or obj itself is {L:{pop:val}}
         try:
             for Ls, mp in obj.items():
                 L = int(Ls)
@@ -202,7 +202,7 @@ def _ingest_row_like(tab, obj):
         except:
             return
     else:
-        # container 可能是 pop->L 或 L->pop
+        # container could be pop->L or L->pop
         if any(k in POPS for k in container.keys()):
             # pop->L
             for p, mp in container.items():
@@ -243,7 +243,7 @@ def load_freq_json_lines(path, force_jsonl=False):
     tab = defaultdict(dict)
 
     if force_jsonl:
-        # 严格 JSONL：逐行解析
+        # Strict JSONL: parse line by line
         with open(path, "r", encoding="utf-8") as f:
             for ln in f:
                 ln = ln.strip()
@@ -262,11 +262,11 @@ def load_freq_json_lines(path, force_jsonl=False):
                     continue
         return tab
 
-    # AUTO：先尝试整体 JSON；失败则回退 JSONL
+    # AUTO: try whole JSON first; fail then fallback to JSONL
     try:
         with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)   # 如果是 JSONL，这里多半会抛 Extra data
-        # 成功：data 可能是 list 或 dict
+            data = json.load(f)   # If it's JSONL, this will likely raise Extra data
+        # Success: data might be list or dict
         if isinstance(data, list):
             for x in data:
                 if isinstance(x, dict):
@@ -275,7 +275,7 @@ def load_freq_json_lines(path, force_jsonl=False):
             _ingest_row_like(tab, data)
         return tab
     except Exception:
-        # 回退 JSONL
+        # Fallback JSONL
         return load_freq_json_lines(path, force_jsonl=True)
 
 def load_freq_auto(path):
@@ -287,7 +287,7 @@ def load_freq_auto(path):
     else:
         return load_freq_tsv(path), "tsv"
 
-# ------------------ 混血与极端先验 ------------------
+# ------------------ Admixture and Extreme Priors ------------------
 def parse_popmix(s):
     # "EUR=0.6,AFR=0.4" -> dict
     if not s:
@@ -298,7 +298,7 @@ def parse_popmix(s):
             continue
         k,v = kv.split("=")
         out[k.strip().upper()] = float(v)
-    # 归一化
+    # Normalize
     tot = sum(out.values())
     if tot > 0:
         for k in out:
@@ -306,7 +306,7 @@ def parse_popmix(s):
     return out
 
 def mix_prior_for_locus(freq_tab, locus_id, cand_L, popmix):
-    # 返回 p_L（已平滑、归一化）
+    # Returns p_L (smoothed, normalized)
     eps = 1e-12
     raw = {}
     has_any = False
@@ -318,17 +318,17 @@ def mix_prior_for_locus(freq_tab, locus_id, cand_L, popmix):
                 s += w * pops.get(p, 0.0)
             raw[L] = s
         else:
-            # 默认 ALL
+            # Default ALL
             raw[L] = pops.get("ALL", 0.0)
         has_any = has_any or (raw[L] > 0)
-    # 平滑：若全为 0，则退为均匀
+    # Smoothing: if all are 0, revert to uniform
     if not has_any:
         for L in cand_L:
             raw[L] = 1.0
-    # 加 eps 防零
+    # Add eps to prevent zero
     for L in cand_L:
         raw[L] = raw[L] + eps
-    # 归一化
+    # Normalize
     tot = sum(raw.values())
     for L in cand_L:
         raw[L] /= tot
@@ -347,7 +347,7 @@ def parse_extreme_list(lst):
     return out
 
 def apply_extreme(prior_dict, extreme_L):
-    # 把 prior 近似改成：L*=1-ε，其它=(ε/(n-1))
+    # Approximating prior change to: L*=1-ε, others=(ε/(n-1))
     if extreme_L is None:
         return prior_dict
     ks = list(prior_dict.keys())
@@ -360,10 +360,10 @@ def apply_extreme(prior_dict, extreme_L):
     prior_dict[extreme_L] = 1.0 - eps
     return prior_dict
 
-# ------------------ 简单双端 SW（线性gap；仅求最大分） ------------------
+# ------------------ Simple Dual-Ended SW (linear gap; only calculate max score) ------------------
 def sw_score(a, b, match=2, mismatch=-3, gap=-4, band=None):
-    # 返回最大局部比对得分（不回溯）
-    # 可选 band：若给定，限制 |i - j| <= band（节省时间）
+    # Returns max local alignment score (no traceback)
+    # Optional band: if given, limits |i - j| <= band (saves time)
     n, m = len(a), len(b)
     prev = [0]*(m+1)
     best = 0
@@ -390,7 +390,7 @@ def sw_score(a, b, match=2, mismatch=-3, gap=-4, band=None):
         prev = cur
     return best
 
-# ------------------ 基因型遍历与打分 ------------------
+# ------------------ Genotype Traversal and Scoring ------------------
 def all_genotype_pairs(cands):
     out = []
     for i, L1 in enumerate(cands):
@@ -400,23 +400,23 @@ def all_genotype_pairs(cands):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--gfa", required=True, help="包含 X\tSTR 行的 GFA 文件")
-    # 单端或双端，二选一：
-    ap.add_argument("--fq",  required=False, help="单端 FASTQ(.gz)")
-    ap.add_argument("--fq1", required=False, help="双端 R1 FASTQ(.gz)")
-    ap.add_argument("--fq2", required=False, help="双端 R2 FASTQ(.gz)")
-    ap.add_argument("--freq", required=False, default=None, help="等位频率表，支持 .tsv / .jsonl / .json")
-    ap.add_argument("--popmix", required=False, default=None, help='如 \"EUR=0.6,AFR=0.4\"，否则用 ALL 列或均匀')
-    ap.add_argument("--extreme", required=False, default=None, nargs="*", help='形如 locus_id=L 的列表，用于极端先验验证')
-    ap.add_argument("--tau", type=float, default=12.0, help="softmax 温度（把 SW 分数转成概率时的缩放）")
-    ap.add_argument("--band", type=int, default=60, help="SW 带宽，限制 |i-j| 以提速")
-    ap.add_argument("--max_reads_per_locus", type=int, default=500, help="每个位点最多使用多少条 read（随机下采样）")
-    ap.add_argument("--out", required=True, help="输出 TSV 文件路径")
+    ap.add_argument("--gfa", required=True, help="GFA file containing X STR lines")
+    # Single-end or Paired-end, choose one:
+    ap.add_argument("--fq",  required=False, help="Single-end FASTQ(.gz)")
+    ap.add_argument("--fq1", required=False, help="Paired-end R1 FASTQ(.gz)")
+    ap.add_argument("--fq2", required=False, help="Paired-end R2 FASTQ(.gz)")
+    ap.add_argument("--freq", required=False, default=None, help="Allele frequency table, supports .tsv / .jsonl / .json")
+    ap.add_argument("--popmix", required=False, default=None, help='e.g. \"EUR=0.6,AFR=0.4\", otherwise uses ALL column or uniform')
+    ap.add_argument("--extreme", required=False, default=None, nargs="*", help='List in format locus_id=L, for extreme prior verification')
+    ap.add_argument("--tau", type=float, default=12.0, help="Softmax temperature (scaling SW score to probability)")
+    ap.add_argument("--band", type=int, default=60, help="SW bandwidth, limits |i-j| to speed up")
+    ap.add_argument("--max_reads_per_locus", type=int, default=500, help="Max reads to use per locus (random subsampling)")
+    ap.add_argument("--out", required=True, help="Output TSV file path")
     args = ap.parse_args()
 
     loci = parse_gfa_strs(args.gfa)
     if not loci:
-        print("GFA 中未找到 X STR 行", file=sys.stderr); sys.exit(2)
+        print("No X STR lines found in GFA", file=sys.stderr); sys.exit(2)
 
     freq_tab = {}
     freq_type = None
@@ -425,7 +425,7 @@ def main():
     popmix = parse_popmix(args.popmix)
     extreme_map = parse_extreme_list(args.extreme)
 
-    # 读入全部 reads 到内存（小样本足够；双端即 R1+R2）
+    # Load all reads into memory (small samples are fine; paired-end means R1+R2)
     reads = load_reads_from_args(args)
 
     out_rows = []
@@ -436,19 +436,19 @@ def main():
         right = loc["right"]
         cands = sorted(set(loc["candidates"])) or list(range(3, 20))
 
-        # H_L 序列池
+        # H_L Sequence Pool
         H = {L: (left + motif*L + right) for L in cands}
 
-        # 抽样 reads
+        # Sample reads
         idxs = list(range(len(reads)))
         random.shuffle(idxs)
         idxs = idxs[:args.max_reads_per_locus]
         reads_sel = [reads[i] for i in idxs]
 
-        # 逐 read：把 SW 得分 softmax 成 P(r|L)
+        # Per read: Softmax SW scores into P(r|L)
         per_read_log10PL = []
         for (qname, qseq, qqual) in reads_sel:
-            # 计算每个 L 的 SW 得分
+            # Calculate SW score for each L
             scores = {}
             bestS = None
             for L, hseq in H.items():
@@ -456,7 +456,7 @@ def main():
                 scores[L] = s
                 if (bestS is None) or (s > bestS):
                     bestS = s
-            # softmax → 概率（以 log10 形式保存）
+            # softmax -> probability (saved as log10)
             log10P = {}
             denom = 0.0
             for L, s in scores.items():
@@ -470,7 +470,7 @@ def main():
 
         n_reads = len(per_read_log10PL)
 
-        # APL_json（按等位汇总的“代价”）：-10 * (sum_r log10 P(r|L) - max_L ...)
+        # APL_json (Aggregated "cost" per allele): -10 * (sum_r log10 P(r|L) - max_L ...)
         sum_log10_P_L = {L: 0.0 for L in cands}
         for d in per_read_log10PL:
             for L,v in d.items():
@@ -478,10 +478,10 @@ def main():
         max_sum = max(sum_log10_P_L.values())
         APL = {str(L): int(round(-10.0*(sum_log10_P_L[L] - max_sum))) for L in cands}
 
-        # 基因型穷举
+        # Genotype enumeration
         pairs = all_genotype_pairs(cands)
 
-        # 先验（混血）；若有 extreme 指定，则覆盖
+        # Prior (Admixture); if extreme is specified, override
         prior = mix_prior_for_locus(freq_tab, lid, cands, popmix)
         if lid in extreme_map:
             prior = apply_extreme(prior, extreme_map[lid])
@@ -490,13 +490,13 @@ def main():
         post = {}
         prior_g = {}
         for (L1,L2) in pairs:
-            # 似然
+            # Likelihood
             s = 0.0
             for d in per_read_log10PL:
                 pr = 0.5*(10**d[L1]) + 0.5*(10**d[L2])
                 s += math.log10(max(pr, 1e-300))
             like[(L1,L2)] = s
-            # 先验（HW）
+            # Prior (HW)
             if L1 == L2:
                 pg = prior[L1]*prior[L1]
             else:
@@ -504,7 +504,7 @@ def main():
             prior_g[(L1,L2)] = pg
             post[(L1,L2)] = s + math.log10(max(pg, 1e-300))
 
-        # 取最佳/次佳（like 与 post 各自独立排名）
+        # Pick best/second best (like and post ranked independently)
         def top2(d):
             arr = sorted(d.items(), key=lambda kv: kv[1], reverse=True)
             best = arr[0]
@@ -517,11 +517,11 @@ def main():
         post_best, post2 = best_post[1], sec_post[1]
         like_best, like2 = best_like[1], sec_like[1]
 
-        # 计算 Δ，若次优为 -inf，则视为 Δ=+inf → GQ=99
+        # Calculate Δ, if second best is -inf, treat as Δ=+inf -> GQ=99
         delta = post_best - post2 if math.isfinite(post2) else float('inf')
         GQ = _cap_gq_from_delta(delta)
 
-        # 计算 log_prior_best（基于最优基因型的 HW 先验）
+        # Calculate log_prior_best (HW prior based on best genotype)
         def _fmt(x):
             return x if math.isfinite(x) else "NA"
 
@@ -543,7 +543,7 @@ def main():
         }
         out_rows.append(row)
 
-    # 写出 TSV
+    # Write TSV
     cols = ["locus_id","motif","n_reads","candidates","GT","GQ",
             "like_best_log10","like2_log10","post_best_log10","post2_log10",
             "log_prior_best","prior_src","prior_L_json","APL_json"]
