@@ -1,65 +1,74 @@
-STR_PG: Pan-Genome Graph STR Genotyper
-STR_PG is a comprehensive toolkit for constructing pan-genome graphs, mapping sequencing reads, and genotyping Short Tandem Repeats (STRs) using graph-based alignment and probabilistic modeling. It is designed to handle complex variation representation and provide accurate genotyping using population priors.
+# STR_PG: Pan-Genome Graph STR Genotyper
 
-Features
-Graph Construction: Build GFA-format graphs from reference genomes, VCF variants, and STR catalogs.
+**STR_PG** is a comprehensive toolkit for constructing pan-genome graphs, mapping sequencing reads, and genotyping Short Tandem Repeats (STRs) using graph-based alignment and probabilistic modeling. It is designed to handle complex variation representation and provide accurate genotyping using population priors.
 
-Efficient Indexing: Creates minimizer/syncmer seed indexes using DBM sharding for low-memory usage.
+## Features
 
-Fast Mapping: Multiprocessing-optimized read mapping to the graph (GAF output).
+* **Graph Construction**: Build GFA-format graphs from reference genomes, VCF variants, and STR catalogs.
+* **Efficient Indexing**: Creates minimizer/syncmer seed indexes using DBM sharding for low-memory usage.
+* **Fast Mapping**: Multiprocessing-optimized read mapping to the graph (GAF output).
+* **Probabilistic Genotyping**: Genotype STRs using a Smith-Waterman alignment approach with population frequency priors.
+* **Frequency Learning**: Incrementally update population frequency databases based on genotyping results.
 
-Probabilistic Genotyping: Genotype STRs using a Smith-Waterman alignment approach with population frequency priors.
+## Requirements
 
-Frequency Learning: Incrementally update population frequency databases based on genotyping results.
+### System
 
-Requirements
-System
-OS: Linux / macOS
+* **OS**: Linux / macOS
+* **Python**: 3.9+
 
-Python: 3.9+
+### Python Dependencies
 
-Python Dependencies
 Install the required packages using pip:
 
-Bash
-
+```bash
 pip install pysam tqdm
-pysam: Required for VCF parsing in the build step.
 
-tqdm: Required for progress bars during mapping.
+```
 
-Standard libraries used: argparse, json, gzip, dbm, multiprocessing, pickle, struct.
+* `pysam`: Required for VCF parsing in the build step.
+* `tqdm`: Required for progress bars during mapping.
+* Standard libraries used: `argparse`, `json`, `gzip`, `dbm`, `multiprocessing`, `pickle`, `struct`.
 
-Installation
+---
+
+## Installation
+
 Clone this repository:
 
-Bash
-
+```bash
 git clone https://github.com/yourusername/STR_PG.git
 cd STR_PG
+
+```
+
 Make the scripts executable (optional):
 
-Bash
-
+```bash
 chmod +x *.py
-Usage Pipeline
-1. Build the Pan-Genome Graph (pgg_build.py)
-Constructs a .gfa graph file containing the reference sequence, variants (SNP/Indel), and STR bubbles.
 
-Input Requirements:
+```
 
-Reference Genome (FASTA)
+---
 
-STR Catalog (TSV)
+## Usage Pipeline
 
-Variants VCF (Optional)
+### 1. Build the Pan-Genome Graph (`pgg_build.py`)
 
-STR Catalog Format (TSV): Columns: build, chrom, start, end, motif, candidate_Ls, pointer_id
+Constructs a `.gfa` graph file containing the reference sequence, variants (SNP/Indel), and STR bubbles.
 
-Command:
+**Input Requirements:**
 
-Bash
+* Reference Genome (FASTA)
+* STR Catalog (TSV)
+* Variants VCF (Optional)
 
+**STR Catalog Format (TSV):**
+Columns: `build`, `chrom`, `start`, `end`, `motif`, `candidate_Ls`, `pointer_id`
+
+**Command:**
+
+```bash
 python pgg_build.py \
     --ref reference.fa \
     --vcf variants.vcf.gz \
@@ -67,26 +76,32 @@ python pgg_build.py \
     --build GRCh38 \
     --flank 100 \
     --out graph.gfa
-2. Index the Graph (pgg_index.py)
+
+```
+
+### 2. Index the Graph (`pgg_index.py`)
+
 Creates a sharded index for fast read mapping. This generates path coordinates and seed databases.
 
-Command:
+**Command:**
 
-Bash
-
+```bash
 python pgg_index.py \
     --graph graph.gfa \
     --out index_directory \
     --method syncmer \
     --k 15 --s 5 --t 2 \
     --shards 64
-3. Map Reads to Graph (pgg_map_optimized.py)
+
+```
+
+### 3. Map Reads to Graph (`pgg_map_optimized.py`)
+
 Aligns FASTQ reads to the graph index. This step supports multi-processing for speed.
 
-Command:
+**Command:**
 
-Bash
-
+```bash
 python pgg_map_optimized.py \
     --index index_directory \
     --reads1 sample_R1.fastq.gz \
@@ -94,15 +109,18 @@ python pgg_map_optimized.py \
     --out aligned_reads.gaf \
     --threads 8 \
     --batch_size 5000
-Note: Use --reads for single-end sequencing.
 
-4. Genotype STRs (pgg_genotype.py)
+```
+
+* *Note: Use `--reads` for single-end sequencing.*
+
+### 4. Genotype STRs (`pgg_genotype.py`)
+
 Performs the final genotyping using the Graph, Alignments (GAF), and raw reads.
 
-Command:
+**Command:**
 
-Bash
-
+```bash
 python pgg_genotype.py \
     --gfa graph.gfa \
     --gaf aligned_reads.gaf \
@@ -112,47 +130,64 @@ python pgg_genotype.py \
     --out genotypes.tsv \
     --region chr19:40000000-50000000 \
     --popmix "EUR=0.6,AFR=0.4"
---freq: Population frequency file (JSONL format).
 
---region: (Optional) Limit genotyping to a specific genomic region for speed.
+```
 
---popmix: (Optional) Specify admixture proportions for priors.
+* `--freq`: Population frequency file (JSONL format).
+* `--region`: (Optional) Limit genotyping to a specific genomic region for speed.
+* `--popmix`: (Optional) Specify admixture proportions for priors.
 
-5. (Optional) Update Frequency Database (pgg_update_freq.py)
+### 5. (Optional) Update Frequency Database (`pgg_update_freq.py`)
+
 Update your population frequency database using the genotyping results from a sample (uses homozygous loci only).
 
-Command:
+**Command:**
 
-Bash
-
+```bash
 python pgg_update_freq.py \
     --geno genotypes.tsv \
     --freq-in current_freq.jsonl \
     --freq-out updated_freq.jsonl \
     --pop EAS \
     --min-GQ 20
-6. (Optional) Validation/Testing (pgg_genotype_str_fix2.py)
+
+```
+
+### 6. (Optional) Validation/Testing (`pgg_genotype_str_fix2.py`)
+
 A simplified genotyper useful for debugging specific loci or verifying priors without the full pipeline overhead.
 
-Command:
+**Command:**
 
-Bash
-
+```bash
 python pgg_genotype_str_fix2.py \
     --gfa graph.gfa \
     --fq1 sample_R1.fastq.gz \
     --fq2 sample_R2.fastq.gz \
     --freq freq_database.jsonl \
     --out validation_output.tsv
-File Formats
-STR Catalog (TSV) Example
-代码段
 
+```
+
+---
+
+## File Formats
+
+### STR Catalog (TSV) Example
+
+```tsv
 build	chrom	start	end	motif	candidate_Ls	pointer_id
 GRCh38	chr1	1000	1004	AT	10,11,12,13	STR_1
-Frequency Database (JSONL) Example
-JSON
 
+```
+
+### Frequency Database (JSONL) Example
+
+```json
 {"pointer_id": "STR_1", "freq": {"EAS": {"10": 0.2, "11": 0.8}, "EUR": {"10": 0.5, "11": 0.5}}}
-License
-MIT License (or specify your license here)
+
+```
+
+## License
+
+[MIT License](https://www.google.com/search?q=LICENSE) (or specify your license here)
