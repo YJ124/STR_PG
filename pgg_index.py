@@ -1,33 +1,35 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-PGG（Pan-Genome Graph）— 4.2 index（无 SQL 版）
+PGG (Pan-Genome Graph) — 4.2 index (No-SQL version)
 
-将 build 产出的 GFA 建立以下索引：
-  1) 路径扁平化序列池（每条 P 路径一条 .fa）
-  2) 路径坐标索引：{pid -> [(start,node_id,len), ...]}（pickle）
-  3) syncmer/minimizer 种子索引：k-mer -> postings(path_id, pos)
-     · 采用 Python 标准库 dbm 的分片 KV 存储（无 SQL，无第三方依赖）
-     · key=8字节hash（blake2b），value=pickle(postings 列表)
-  4) 位点倒排：locus_id -> {allele_paths, candidate_Ls, anchor区段}
+Author:YJ
 
-用法：
+Builds the following indexes from the GFA output of the build step:
+  1) Path Flattened Sequence Pool (One .fa file per P path)
+  2) Path Coordinate Index: {pid -> [(start,node_id,len), ...]} (pickle)
+  3) Syncmer/Minimizer Seed Index: k-mer -> postings(path_id, pos)
+     - Uses Python standard library dbm for sharded KV storage (No SQL, no 3rd party dependencies)
+     - key=8-byte hash (blake2b), value=pickle(postings list)
+  4) Locus Inverted Index: locus_id -> {allele_paths, candidate_Ls, anchor_region}
+
+Usage:
   python pgg_index.py \
     --graph graph.gfa \
     --out index_dir \
     --method syncmer --k 15 --s 5 --t 2 \
     --shards 64 --anchor 100
 
-输出目录结构：
+Output Directory Structure:
   index_dir/
-    ├─ paths/                 # 扁平化序列池
-    ├─ path_coord.pkl         # 路径坐标索引
-    ├─ locus.json             # 位点倒排索引
-    ├─ pid_map.json           # 路径名 <-> 整数ID 映射
-    └─ seeds/                 # 分片KV（dbm）
-        ├─ seeds_000.dbm      # （实际可能含 .db/.dat/.dir 等，取决于平台）
+    ├─ paths/                 # Flattened sequence pool
+    ├─ path_coord.pkl         # Path coordinate index
+    ├─ locus.json             # Locus inverted index
+    ├─ pid_map.json           # Path name <-> Integer ID mapping
+    └─ seeds/                 # Sharded KV (dbm)
+        ├─ seeds_000.dbm      # (Actual extension may be .db/.dat/.dir depending on platform)
         ├─ seeds_001.dbm
-        └─ meta.json          # 方法与参数、路径长度、shard 数等
+        └─ meta.json          # Method, parameters, path lengths, shard count, etc.
 """
 from __future__ import annotations
 import os, sys, re, argparse, json, pickle, hashlib, collections, struct
@@ -35,7 +37,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
 # ------------------------
-# 通用工具
+# General Utilities
 # ------------------------
 DNA_COMP = str.maketrans('ACGTNacgtn', 'TGCANtgcan')
 
@@ -43,7 +45,7 @@ def revcomp(seq: str) -> str:
     return seq.translate(DNA_COMP)[::-1]
 
 # ------------------------
-# 简化的 GFA 解析（兼容 pgg_build.py 输出）
+# Simplified GFA Parsing (Compatible with pgg_build.py output)
 # ------------------------
 @dataclass
 class Node:
@@ -85,7 +87,7 @@ class GFA:
                     }
 
 # ------------------------
-# 路径扁平化与坐标映射
+# Path Flattening and Coordinate Mapping
 # ------------------------
 @dataclass
 class PathSeq:
@@ -108,7 +110,7 @@ class PathFlattener:
         return out
 
 # ------------------------
-# syncmer / minimizer 生成
+# Syncmer / Minimizer Generation
 # ------------------------
 class Seeder:
     @staticmethod
@@ -158,7 +160,7 @@ class Seeder:
         return pos
 
 # ------------------------
-# DBM 分片 KV（无 SQL）
+# DBM Sharded KV (No SQL)
 # ------------------------
 class DBMShardWriter:
     def __init__(self, dir_path: str, shards: int):
@@ -194,9 +196,9 @@ class DBMShardWriter:
 
     def finalize(self):
         import dbm
-        # 写 meta
+        # Write meta
         json.dump(self.meta, open(os.path.join(self.dir, 'meta.json'), 'w'))
-        # 逐 shard 落盘
+        # Flush to disk shard by shard
         for sid in range(self.shards):
             shard_path = os.path.join(self.dir, f'seeds_{sid:03d}.dbm')
             db = dbm.open(shard_path, 'n')  # new
@@ -234,7 +236,7 @@ class DBMShardReader:
         return []
 
 # ------------------------
-# 位点倒排
+# Locus Inverted Index
 # ------------------------
 class LocusInverted:
     def __init__(self):
@@ -264,11 +266,11 @@ class LocusInverted:
             }
 
 # ------------------------
-# 主流程：index
+# Main Workflow: index
 # ------------------------
 
 def main():
-    ap = argparse.ArgumentParser(description='PGG index（无SQL DBM 版）')
+    ap = argparse.ArgumentParser(description='PGG index (No-SQL DBM version)')
     ap.add_argument('--graph', required=True)
     ap.add_argument('--out', required=True)
     ap.add_argument('--method', choices=['syncmer','minimizer'], default='syncmer')
@@ -282,13 +284,13 @@ def main():
 
     os.makedirs(args.out, exist_ok=True)
 
-    # 读 GFA
+    # Read GFA
     gfa = GFA(args.graph)
 
-    # 路径扁平化
+    # Path Flattening
     pathseqs = PathFlattener.flatten(gfa)
 
-    # 写路径序列池
+    # Write Path Sequence Pool
     paths_dir = os.path.join(args.out, 'paths'); os.makedirs(paths_dir, exist_ok=True)
     for pid, ps in pathseqs.items():
         with open(os.path.join(paths_dir, f'{pid}.fa'), 'w') as w:
@@ -297,17 +299,17 @@ def main():
             for i in range(0, len(s), 80):
                 w.write(s[i:i+80] + '\n')
 
-    # 路径坐标
+    # Path Coordinates
     pickle.dump({pid: ps.segments for pid, ps in pathseqs.items()}, open(os.path.join(args.out, 'path_coord.pkl'), 'wb'), protocol=pickle.HIGHEST_PROTOCOL)
 
-    # 位点倒排
+    # Locus Inverted Index
     locus = LocusInverted(); locus.build(gfa, pathseqs, anchor=args.anchor)
     json.dump(locus.index, open(os.path.join(args.out, 'locus.json'), 'w'))
 
-    # pid 映射（字符串 <-> 整数）
+    # pid mapping (String <-> Integer)
     pid_to_i = {pid:i for i, pid in enumerate(pathseqs.keys())}
 
-    # 播种并写 DBM 分片
+    # Seeding and writing DBM Shards
     seeder = Seeder()
     seeds_dir = os.path.join(args.out, 'seeds'); os.makedirs(seeds_dir, exist_ok=True)
     writer = DBMShardWriter(seeds_dir, shards=args.shards)
@@ -327,7 +329,7 @@ def main():
             kh = Seeder.kmer_hash(kmer)
             writer.add_seed(kh, pid_i, i)
 
-    # 保存 pid 映射
+    # Save pid map
     json.dump({'pid_to_i': pid_to_i}, open(os.path.join(args.out, 'pid_map.json'), 'w'))
 
     writer.finalize()
