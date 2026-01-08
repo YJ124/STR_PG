@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-pgg_genotype_v13.py
+pgg_genotype.py
 ---------------------------------------------------------
-【极速全功能版 V13】
-这是完整的、可执行的代码文件。
-包含：
-1. 双端联合检测 (Joint Calling)
-2. 区域过滤 (Region Filter) - 核心提速功能
-3. 性能参数优化 (Band=50, MaxReads=100)
-4. 完整的频率加载与先验计算逻辑
+Author:YJ
 
-使用方法：
+Includes:
+1. Paired-end Joint Calling
+2. Region Filter - Core speed-up feature
+3. Performance parameter optimization (Band=50, MaxReads=100)
+4. Complete frequency loading and prior calculation logic
+
+Usage:
 python pgg_genotype_v13.py --gfa ... --gaf ... --fq1 ... --fq2 ... --out ... \
     --region chr19:40000000-50000000
 """
@@ -28,7 +28,7 @@ import time
 from collections import defaultdict
 
 # -------------------------------------------------------
-# 全局设置与工具
+# Global Settings and Tools
 # -------------------------------------------------------
 random.seed(1)
 TRANS_TABLE = str.maketrans("ACGTacgtNn", "TGCAtgcaNn")
@@ -37,16 +37,16 @@ def revcomp(seq):
     return seq.translate(TRANS_TABLE)[::-1]
 
 # -------------------------------------------------------
-# ID 清洗与坐标映射
+# ID Cleaning and Coordinate Mapping
 # -------------------------------------------------------
 def normalize_read_id(raw_id):
     """
-    清洗 Read ID，去除 /1, /2 或空格后的描述，保留核心 ID 以便配对。
+    Clean Read ID, remove descriptions after /1, /2 or spaces, keep core ID for pairing.
     """
     if raw_id.startswith("@"): 
         raw_id = raw_id[1:]
-    core = raw_id.split()[0] # 取空格前部分
-    # 去除末尾的配对标识
+    core = raw_id.split()[0] # Take the part before space
+    # Remove trailing pairing indicators
     if core.endswith("/1") or core.endswith("/2"):
         core = core[:-2]
     elif core.endswith(".1") or core.endswith(".2"):
@@ -55,7 +55,7 @@ def normalize_read_id(raw_id):
 
 def parse_region(region_str):
     """
-    解析 region 参数，格式 chr:start-end
+    Parse region argument, format chr:start-end
     """
     if not region_str: return None
     try:
@@ -67,16 +67,16 @@ def parse_region(region_str):
 
 def is_in_region(locus_id, region_tuple):
     """
-    判断 locus_id 是否在指定区域内
-    locus_id 格式示例: GRCh38:chr19:3207858-3207897:CTG
+    Check if locus_id is within the specified region
+    locus_id format example: GRCh38:chr19:3207858-3207897:CTG
     """
     if not region_tuple: return True
     try:
         parts = locus_id.split(":")
-        # 寻找包含坐标的部分
+        # Find parts containing coordinates
         l_chrom, l_start, l_end = None, 0, 0
         
-        # 鲁棒解析：查找包含 'chr' 的字段和包含 '-' 的数字字段
+        # Robust parsing: Look for fields containing 'chr' and numeric fields containing '-'
         for p in parts:
             if "chr" in p: 
                 l_chrom = p
@@ -84,16 +84,16 @@ def is_in_region(locus_id, region_tuple):
                 s, e = map(int, p.split("-"))
                 l_start, l_end = s, e
         
-        # 如果解析失败，保守起见返回 True（或者 False，看策略，这里选 False 以防跑偏）
+        # If parsing fails, return False conservatively to avoid deviations
         if l_chrom is None or l_start == 0:
             return False
 
         r_chrom, r_start, r_end = region_tuple
         
-        # 染色体必须一致
+        # Chromosomes must match
         if l_chrom != r_chrom: return False
         
-        # 判断是否有重叠 (Overlap)
+        # Check for overlap
         # locus: [l_start, l_end], region: [r_start, r_end]
         if l_end < r_start or l_start > r_end:
             return False
@@ -115,16 +115,16 @@ def parse_coords_from_gaf_id(path_name):
     try:
         if path_name.startswith("allele_"):
             parts = path_name.split('_')
-            # 假设 path_name 格式 allele_chr19_123_456_...
-            # 需要根据实际 GFA build 时的命名规则调整
-            # 这里做一个泛化尝试
+            # Assume path_name format allele_chr19_123_456_...
+            # Needs adjustment based on actual naming rules during GFA build
+            # Attempting a generalization here
             if len(parts) >= 4:
                 return f"{parts[1]}:{parts[2]}-{parts[3]}"
     except: pass
     return None
 
 # -------------------------------------------------------
-# 辅助函数：概率与 GQ
+# Helper Functions: Probability and GQ
 # -------------------------------------------------------
 def _cap_gq_from_delta(delta):
     if not math.isfinite(delta): return 99
@@ -179,7 +179,7 @@ def mix_prior_for_locus(freq_tab, locus_id, cand_L, popmix):
     return {L: (v + eps) / tot for L, v in raw.items()}
 
 def apply_extreme(prior, limit_val):
-    # 简单实现：将极端的 L 概率设为很高
+    # Simple implementation: Set the probability of extreme L to be very high
     new_prior = {}
     eps = 1e-6
     n = len(prior)
@@ -191,7 +191,7 @@ def apply_extreme(prior, limit_val):
     return new_prior
 
 # -------------------------------------------------------
-# I/O：GAF 解析与 FASTQ 提取
+# I/O: GAF Parsing and FASTQ Extraction
 # -------------------------------------------------------
 def parse_gaf_and_build_index(gaf_path, loci_map):
     print(f"[INFO] Loading GAF index from: {gaf_path}", file=sys.stderr)
@@ -215,7 +215,7 @@ def parse_gaf_and_build_index(gaf_path, loci_map):
                 if path_name in loci_map:
                     target_lid = path_name
                 else:
-                    # 尝试通过坐标匹配
+                    # Try matching via coordinates
                     c_key = parse_coords_from_gaf_id(path_name)
                     if c_key and c_key in coord_to_gfa_id:
                         target_lid = coord_to_gfa_id[c_key]
@@ -230,8 +230,8 @@ def parse_gaf_and_build_index(gaf_path, loci_map):
 
 def stream_fastq_and_group(fq1, fq2, read_to_loci):
     """
-    读取双端 FASTQ，将 R1 和 R2 绑定在一起存储。
-    返回结构: Dict[locus_id] -> List of ( (n1, s1, q1), (n2, s2, q2) )
+    Read paired-end FASTQ, store R1 and R2 bound together.
+    Return structure: Dict[locus_id] -> List of ( (n1, s1, q1), (n2, s2, q2) )
     """
     loci_data = defaultdict(list)
     op1 = gzip.open if str(fq1).endswith(".gz") else open
@@ -277,7 +277,7 @@ def stream_fastq_and_group(fq1, fq2, read_to_loci):
     return loci_data
 
 # -------------------------------------------------------
-# Smith-Waterman & 似然计算
+# Smith-Waterman & Likelihood Calculation
 # -------------------------------------------------------
 def sw_score(a, b, match=2, mismatch=-5, gap=-5, band=None): 
     n, m = len(a), len(b)
@@ -312,7 +312,7 @@ def get_read_log10_likelihood(seq, H_dict, args):
     scores = {}
     bestS = -1.0
     
-    # 优化点：降低 Band
+    # Optimization: Reduce Band
     for L, hseq in H_dict.items():
         s1 = sw_score(qseq, hseq, band=args.band)
         s2 = sw_score(qseq_rc, hseq, band=args.band)
@@ -320,7 +320,7 @@ def get_read_log10_likelihood(seq, H_dict, args):
         scores[L] = s
         if s > bestS: bestS = s
     
-    # 垃圾过滤
+    # Filter low-quality alignments
     ideal_score = len(qseq) * 2
     if bestS < (ideal_score * args.min_score_ratio):
         return None
@@ -342,7 +342,7 @@ def get_read_log10_likelihood(seq, H_dict, args):
     return log10P
 
 # -------------------------------------------------------
-# 配置解析
+# Configuration Parsing
 # -------------------------------------------------------
 def parse_gfa_strs(path):
     loci = []
@@ -371,14 +371,14 @@ def load_freq_auto(path):
     if not os.path.exists(path):
         print(f"[WARN] Frequency file not found: {path}, using uniform prior.", file=sys.stderr)
         return tab, "missing"
-    # 兼容 JSONL 和 JSON
+    # Compatible with JSONL and JSON
     try:
         with open(path, 'r') as f:
             for line in f:
                 if not line.strip(): continue
                 try:
                     obj = json.loads(line)
-                    # 支持 list of dicts (full JSON) 或 single dict (JSONL)
+                    # Support list of dicts (full JSON) or single dict (JSONL)
                     if isinstance(obj, list):
                         items = obj
                     else:
@@ -392,14 +392,14 @@ def load_freq_auto(path):
                             if k.isdigit() and isinstance(v, dict):
                                 tab[lid][int(k)] = v
                             elif k in ["AFR", "EUR", "EAS", "AMR", "SAS", "ALL"] and isinstance(v, dict):
-                                # 也可以反向解析
+                                # Reverse parsing is also possible
                                 pass
                 except: pass
         return tab, "json"
     except: return tab, "error"
 
 # -------------------------------------------------------
-# 主逻辑
+# Main Logic
 # -------------------------------------------------------
 def main():
     ap = argparse.ArgumentParser()
@@ -413,13 +413,13 @@ def main():
     ap.add_argument("--extreme", required=False, default=None, nargs="*")
     ap.add_argument("--tau", type=float, default=12.0)
     
-    # 优化参数
-    ap.add_argument("--band", type=int, default=50) # 降到 50
-    ap.add_argument("--target_good_reads", type=int, default=50) # 降到 50
-    ap.add_argument("--max_reads_per_locus", type=int, default=100) # 降到 100
+    # Optimization parameters
+    ap.add_argument("--band", type=int, default=50) # Reduced to 50
+    ap.add_argument("--target_good_reads", type=int, default=50) # Reduced to 50
+    ap.add_argument("--max_reads_per_locus", type=int, default=100) # Reduced to 100
     ap.add_argument("--min_score_ratio", type=float, default=0.3)
     
-    # 【核心参数】区域过滤
+    # [Core Parameter] Region Filter
     ap.add_argument("--region", required=False, help="Filter loci by region (e.g. chr19:40000000-50000000)")
     
     args = ap.parse_args()
@@ -431,12 +431,12 @@ def main():
     popmix = parse_popmix(args.popmix)
     extreme_map = parse_extreme_list(args.extreme)
 
-    # 1. 解析 Region
+    # 1. Parse Region
     region_filter = parse_region(args.region)
     if region_filter:
         print(f"[INFO] Region Filter Enabled: {args.region}", file=sys.stderr)
 
-    # 2. 解析 GFA 并应用过滤
+    # 2. Parse GFA and apply filtering
     all_loci = parse_gfa_strs(args.gfa)
     loci_map = {}
     for l in all_loci:
@@ -449,10 +449,10 @@ def main():
 
     freq_tab, ftype = load_freq_auto(args.freq)
     
-    # 3. 解析 GAF 获取白名单 (只解析白名单 Loci 对应的 Reads)
+    # 3. Parse GAF to get whitelist (Only parse reads corresponding to whitelist Loci)
     read_whitelist = parse_gaf_and_build_index(args.gaf, loci_map)
     
-    # 4. 提取并分组 FASTQ
+    # 4. Extract and group FASTQ
     grouped_reads = stream_fastq_and_group(args.fq1, args.fq2, read_whitelist)
 
     out_rows = []
@@ -463,10 +463,10 @@ def main():
     start_time = time.time()
     processed_count = 0
 
-    # 5. 逐个位点进行基因分型
+    # 5. Genotype locus by locus
     for lid in loci_map:
         if lid not in grouped_reads:
-            # 如果想输出空结果也可以，这里为了简洁只输出有 Reads 的
+            # If empty results are desired, that's fine too; here we only output those with reads for brevity
             # out_rows.append({"locus_id": lid, "GT": "./.", "GQ": 0, "n_reads": 0})
             continue
         
@@ -547,7 +547,7 @@ def main():
             "n_reads": valid_pairs_count
         })
 
-    # 输出结果
+    # Output results
     keys = ["locus_id","GT","GQ","n_reads"]
     try:
         with open(args.out, "w", newline="") as f:
