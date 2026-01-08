@@ -13,7 +13,7 @@ from typing import Iterable, Tuple, List, Dict
 import pickle
 from functools import partial
 
-# 尝试导入 tqdm，如果没有则使用简易替代
+# Try importing tqdm, otherwise use a simple alternative
 try:
     from tqdm import tqdm
 except ImportError:
@@ -22,7 +22,7 @@ except ImportError:
             yield item
 
 # ------------------------
-# 通用工具
+# General Utilities
 # ------------------------
 DNA_COMP = str.maketrans('ACGTNacgtn', 'TGCANtgcan')
 
@@ -88,7 +88,7 @@ class Seeder:
         return pos
 
 # ------------------------
-# 读取索引（DBM 分片）
+# Index Reading (DBM Shards)
 # ------------------------
 class DBMShardReader:
     def __init__(self, dir_path: str):
@@ -115,12 +115,13 @@ class DBMShardReader:
         sid = self._shard_id(key_hash)
         if sid not in self._db_cache:
             path = os.path.join(self.dir, f'seeds_{sid:03d}.dbm')
-            # 使用 'r' 只读模式打开，通常支持并发读取
+            # Open in 'r' read-only mode, usually supports concurrent reading
             try:
                 self._db_cache[sid] = dbm.open(path, 'r')
             except Exception as e:
-                # 兼容某些 dbm 实现可能需要 'c' 或其他标志，但只读应该用 'r'
-                # 如果是多进程，必须确保在进程内打开
+                # Compatibility: some dbm implementations might need 'c' or other flags,
+                # but read-only should use 'r'.
+                # If multiprocessing, must ensure opening within the process.
                 raise RuntimeError(f"Cannot open DBM file {path}: {e}")
                 
         db = self._db_cache[sid]
@@ -130,11 +131,11 @@ class DBMShardReader:
         return []
 
 # ------------------------
-# FASTQ 读取：迭代器模式 (移除预先统计行数)
+# FASTQ Reading: Iterator mode (removed pre-counting of lines)
 # ------------------------
 
 def read_fastq(path):
-    """读取单个 FASTQ(.gz)：yield (name, seq, qual)"""
+    """Read single FASTQ(.gz): yield (name, seq, qual)"""
     op = gzip.open if str(path).endswith(".gz") else open
     with op(path, "rt", encoding='utf-8', errors='replace') as f:
         while True:
@@ -149,7 +150,7 @@ def read_fastq(path):
             yield name[1:] if name.startswith("@") else name, seq, qual
 
 def chunked_iterable(iterable, size):
-    """将迭代器切分成块，用于多进程分发"""
+    """Split iterator into chunks for multiprocessing distribution"""
     import itertools
     it = iter(iterable)
     while True:
@@ -159,7 +160,7 @@ def chunked_iterable(iterable, size):
         yield chunk
 
 # ------------------------
-# 连锁与 GAF 输出
+# Chaining and GAF Output
 # ------------------------
 
 @dataclass
@@ -243,19 +244,19 @@ class Mapper:
         )
 
 # ------------------------
-# 多进程 Worker 逻辑
+# Multiprocessing Worker Logic
 # ------------------------
 
-# 全局变量，用于 worker 进程持有 Mapper 实例，避免重复加载
+# Global variable for the worker process to hold the Mapper instance, avoiding repeated loading
 worker_mapper = None
 
 def init_worker(index_dir):
-    """Worker 进程初始化：每个进程只加载一次索引"""
+    """Worker process initialization: load index only once per process"""
     global worker_mapper
     worker_mapper = Mapper(index_dir)
 
 def process_batch_single(batch, args_dict):
-    """处理单端 reads 的 batch"""
+    """Process a batch of single-end reads"""
     global worker_mapper
     results = []
     method, k, s, t, w, max_occ, slack = args_dict['method'], args_dict['k'], args_dict['s'], args_dict['t'], args_dict['w'], args_dict['max_occ'], args_dict['slack']
@@ -268,7 +269,7 @@ def process_batch_single(batch, args_dict):
     return results
 
 def process_batch_paired(batch, args_dict):
-    """处理双端 reads 的 batch"""
+    """Process a batch of paired-end reads"""
     global worker_mapper
     results = []
     method, k, s, t, w, max_occ, slack = args_dict['method'], args_dict['k'], args_dict['s'], args_dict['t'], args_dict['w'], args_dict['max_occ'], args_dict['slack']
@@ -295,63 +296,63 @@ def process_batch_paired(batch, args_dict):
 
 def main():
     ap = argparse.ArgumentParser(description='PGG map (Multiprocessing Optimized)')
-    ap.add_argument('--index', required=True, help='索引目录')
-    ap.add_argument('--reads', help='单端 FASTQ(.gz)')
-    ap.add_argument('--reads1', help='双端 R1 FASTQ(.gz)')
-    ap.add_argument('--reads2', help='双端 R2 FASTQ(.gz)')
-    ap.add_argument('--out', required=True, help='输出 GAF 文件')
+    ap.add_argument('--index', required=True, help='Index directory')
+    ap.add_argument('--reads', help='Single-end FASTQ(.gz)')
+    ap.add_argument('--reads1', help='Paired-end R1 FASTQ(.gz)')
+    ap.add_argument('--reads2', help='Paired-end R2 FASTQ(.gz)')
+    ap.add_argument('--out', required=True, help='Output GAF file')
     
-    # 算法参数
+    # Algorithm parameters
     ap.add_argument('--method', choices=['syncmer', 'minimizer'], default='syncmer')
     ap.add_argument('--k', type=int, default=15)
     ap.add_argument('--s', type=int, default=5)
-    ap.add_argument('--t', type=int, default=2, help="Syncmer 参数 (不要填CPU线程数!)")
+    ap.add_argument('--t', type=int, default=2, help="Syncmer parameter (Do NOT enter CPU thread count!)")
     ap.add_argument('--w', type=int, default=10)
     ap.add_argument('--max_occ', type=int, default=200)
     ap.add_argument('--slack', type=int, default=10)
     
-    # 新增性能参数
-    ap.add_argument('--threads', type=int, default=1, help='并行处理的 CPU 线程数')
-    ap.add_argument('--batch_size', type=int, default=5000, help='每个线程一次处理的 reads 数量')
+    # New performance parameters
+    ap.add_argument('--threads', type=int, default=1, help='Number of CPU threads for parallel processing')
+    ap.add_argument('--batch_size', type=int, default=5000, help='Number of reads processed per thread at a time')
 
     args = ap.parse_args()
 
-    # 参数打包
+    # Pack parameters
     algo_params = {
         'method': args.method, 'k': args.k, 's': args.s, 't': args.t, 
         'w': args.w, 'max_occ': args.max_occ, 'slack': args.slack
     }
 
-    # 准备输入流
+    # Prepare input streams
     if args.reads:
         mode = 'single'
-        print(f"[MAP] 单端模式，输入：{args.reads}", file=sys.stderr)
+        print(f"[MAP] Single-end mode, input: {args.reads}", file=sys.stderr)
         read_iter = read_fastq(args.reads)
     elif args.reads1 and args.reads2:
         mode = 'paired'
-        print(f"[MAP] 双端模式，输入：R1={args.reads1} R2={args.reads2}", file=sys.stderr)
-        # 使用 zip 同时读取两个文件
+        print(f"[MAP] Paired-end mode, input: R1={args.reads1} R2={args.reads2}", file=sys.stderr)
+        # Use zip to read both files simultaneously
         read_iter = zip(read_fastq(args.reads1), read_fastq(args.reads2))
     else:
-        print("[ERROR] 请指定 --reads 或 (--reads1 + --reads2)", file=sys.stderr)
+        print("[ERROR] Please specify --reads or (--reads1 + --reads2)", file=sys.stderr)
         sys.exit(1)
 
-    print(f"[MAP] 开启多进程并行: {args.threads} 线程 (Batch size: {args.batch_size})", file=sys.stderr)
+    print(f"[MAP] Starting multiprocessing: {args.threads} threads (Batch size: {args.batch_size})", file=sys.stderr)
 
-    # 开启多进程池
-    # initializer 确保每个子进程独立打开 DBM 索引，避免锁冲突
+    # Start multiprocessing pool
+    # initializer ensures each child process opens DBM index independently to avoid lock conflicts
     with multiprocessing.Pool(processes=args.threads, initializer=init_worker, initargs=(args.index,)) as pool:
         
-        # 将 reads 生成器切分为 chunk
+        # Split reads generator into chunks
         chunks = chunked_iterable(read_iter, args.batch_size)
         
-        # 选择处理函数
+        # Select processing function
         worker_func = process_batch_single if mode == 'single' else process_batch_paired
         func_with_args = partial(worker_func, args_dict=algo_params)
 
         with open(args.out, 'w') as outf:
-            # imap 提供有序结果，且稍微节省内存
-            # 使用 tqdm 显示处理的 batch 数量
+            # imap provides ordered results and saves some memory
+            # Use tqdm to show the number of processed batches
             for batch_results in tqdm(pool.imap(func_with_args, chunks), desc="Processing Batches"):
                 for line in batch_results:
                     outf.write(line + "\n")
