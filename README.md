@@ -78,6 +78,8 @@ python pgg_build.py \
     --out graph.gfa
 
 ```
+
+The command to execute in the test_data folder is:
 ```bash
 python pgg_build.py \
     --ref test_data/chr19.fa \
@@ -120,6 +122,8 @@ python pgg_map_optimized.py \
     --batch_size 5000
 
 ```
+
+The command to execute in the test_data folder is:
 ```bash
 python pgg_map_optimized.py \
     --index index_dir \
@@ -155,6 +159,7 @@ python pgg_genotype.py \
 * `--region`: (Optional) Limit genotyping to a specific genomic region for speed.
 * `--popmix`: (Optional) Specify admixture proportions for priors.
 
+The command to execute in the test_data folder is:
 ```bash
 python pgg_genotype.py \
     --gfa test_data/graph.gfa \
@@ -182,7 +187,16 @@ python pgg_update_freq.py \
     --min-GQ 20
 
 ```
+The command to execute in the test_data folder is:
+```bash
+python pgg_update_freq.py \
+    --geno genotypes.tsv \
+    --freq-in freq19.jsonl \
+    --freq-out freq19_updated.jsonl \
+    --pop EAS \
+    --min-GQ 20
 
+```
 ### 6. (Optional) Validation/Testing (`pgg_genotype_str_fix2.py`)
 
 A simplified genotyper useful for debugging specific loci or verifying priors without the full pipeline overhead.
@@ -198,6 +212,8 @@ python pgg_genotype_str_fix2.py \
     --out validation_output.tsv
 
 ```
+
+The command to execute in the test_data folder is:
 ```bash
 python pgg_genotype_str_fix2.py \
     --gfa test_data/graph.gfa \
