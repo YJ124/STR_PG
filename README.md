@@ -78,7 +78,16 @@ python pgg_build.py \
     --out graph.gfa
 
 ```
+```bash
+python pgg_build.py \
+    --ref test_data/chr19.fa \
+    --vcf test_data/chr19_STR.vcf.gz \
+    --str-catalog test_data/str_catalog.tsv \
+    --build GRCh38 \
+    --flank 100 \
+    --out test_data/graph.gfa
 
+```
 ### 2. Index the Graph (`pgg_index.py`)
 
 Creates a sharded index for fast read mapping. This generates path coordinates and seed databases.
@@ -87,7 +96,7 @@ Creates a sharded index for fast read mapping. This generates path coordinates a
 
 ```bash
 python pgg_index.py \
-    --graph graph.gfa \
+    --graph test_data/graph.gfa \
     --out index_directory \
     --method syncmer \
     --k 15 --s 5 --t 2 \
@@ -104,14 +113,23 @@ Aligns FASTQ reads to the graph index. This step supports multi-processing for s
 ```bash
 python pgg_map_optimized.py \
     --index index_directory \
-    --reads1 sample_R1.fastq.gz \
-    --reads2 sample_R2.fastq.gz \
+    --reads1 sample_1_R1.fastq.gz \
+    --reads2 sample_1_R2.fastq.gz \
     --out aligned_reads.gaf \
     --threads 8 \
     --batch_size 5000
 
 ```
+```bash
+python pgg_map_optimized.py \
+    --index index_dir \
+    --reads1 test_data/sample_1_R1.fastq \
+    --reads2 test_data/sample_1_R2.fastq \
+    --out test_data/sample1.gaf \
+    --threads 8 \
+    --batch_size 5000
 
+```
 * *Note: Use `--reads` for single-end sequencing.*
 
 ### 4. Genotype STRs (`pgg_genotype.py`)
@@ -137,6 +155,18 @@ python pgg_genotype.py \
 * `--region`: (Optional) Limit genotyping to a specific genomic region for speed.
 * `--popmix`: (Optional) Specify admixture proportions for priors.
 
+```bash
+python pgg_genotype.py \
+    --gfa test_data/graph.gfa \
+    --gaf test_data/sample1.gaf \
+    --fq1 test_data/sample_1_R1.fastq.gz \
+    --fq2 test_data/sample_1_R2.fastq.gz \
+    --freq freq_database.jsonl \
+    --out test_data/genotypes.tsv \
+    --region chr19:40000000-50000000 \
+    --popmix "EUR=0.6,AFR=0.4"
+
+```
 ### 5. (Optional) Update Frequency Database (`pgg_update_freq.py`)
 
 Update your population frequency database using the genotyping results from a sample (uses homozygous loci only).
@@ -168,7 +198,15 @@ python pgg_genotype_str_fix2.py \
     --out validation_output.tsv
 
 ```
+```bash
+python pgg_genotype_str_fix2.py \
+    --gfa test_data/graph.gfa \
+    --fq1 test_data/sample_1_R1.fastq.gz \
+    --fq2 test_data/sample_1_R2.fastq.gz \
+    --freq freq19.jsonl \
+    --out validation_output.tsv
 
+```
 ---
 
 ## File Formats
@@ -188,6 +226,3 @@ GRCh38	chr1	1000	1004	AT	10,11,12,13	STR_1
 
 ```
 
-## License
-
-[MIT License](https://www.google.com/search?q=LICENSE) (or specify your license here)
