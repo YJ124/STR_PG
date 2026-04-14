@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-pgg_genotype_hybrid_fast.py
----------------------------------------------------------
-Hybrid fast STR genotyper:
-1. Keep the original fast banded SW stage for coarse scoring.
-2. Run pHMM only on a small SW-shortlisted allele set.
-3. Optionally cap very large candidate sets using frequency priors.
-4. Early-cap per-locus FASTQ buffering to reduce memory.
 
-This is meant to be much faster than the full pHMM version while still
-using pHMM for final per-read allele likelihoods on the most plausible
-candidates.
 """
+pgg_genotype.py
+---------------------------------------------------------
+Author:YJ
+
+Includes:
+1. Paired-end Joint Calling
+2. Region Filter - Core speed-up feature
+3. Performance parameter optimization (Band=50, MaxReads=100)
+4. Complete frequency loading and prior calculation logic
+
+Usage:
+python pgg_genotype_v13.py --gfa ... --gaf ... --fq1 ... --fq2 ... --out ... \
+    --region chr19:40000000-50000000
+"""
+
 
 import sys
 import os
