@@ -1,34 +1,97 @@
-# STR_PG: Pan-Genome Graph STR Genotyper
+# STR-PG: Decoupling Allelic Complexity on Pangenome Graph for Scalable STR Genotyping
 
-**STR_PG** is a comprehensive toolkit for constructing pan-genome graphs, mapping sequencing reads, and genotyping Short Tandem Repeats (STRs) using graph-based alignment and probabilistic modeling. It is designed to handle complex variation representation and provide accurate genotyping using population priors.
+**STR-PG** is an STR-specialized pangenome framework for building pointer-node-based graphs, mapping short reads with syncmer seeds, and genotyping short tandem repeats (STRs) using a **motif-aware profile hidden Markov model (pHMM)** and **population-aware Bayesian inference**.
 
-## Features
+Unlike conventional graph methods that explicitly encode every STR allele as a separate path, STR-PG represents each target STR locus as a **fixed-topology pointer node** in the graph and stores allele-resolved sequence content in an **external allele registry**. This design keeps local graph complexity stable, enables incremental allele registration without whole-graph reconstruction, and supports scalable short-read STR genotyping.
 
-* **Graph Construction**: Build GFA-format graphs from reference genomes, VCF variants, and STR catalogs.
-* **Efficient Indexing**: Creates minimizer/syncmer seed indexes using DBM sharding for low-memory usage.
-* **Fast Mapping**: Multiprocessing-optimized read mapping to the graph (GAF output).
-* **Probabilistic Genotyping**: Genotype STRs using a Smith-Waterman alignment approach with population frequency priors.
-* **Frequency Learning**: Incrementally update population frequency databases based on genotyping results.
+---
+
+## Overview
+
+STR-PG consists of four tightly connected components:
+
+1. **Build**  
+   Construct a GFA pangenome graph in which hypervariable STR loci are collapsed into **pointer nodes** rather than expanded into dense local bubbles.
+
+2. **Index / Map**  
+   Build a **syncmer-based graph index** and map reads to graph loci using seeding, chaining, and path-interval localization.
+
+3. **Genotype**  
+   Retrieve the candidate allele set from the external registry and perform probabilistic genotyping using:
+   - population-aware priors
+   - motif-aware pHMM likelihoods
+   - posterior-based genotype selection
+
+4. **Registry / Update**  
+   Maintain a dynamic allele registry containing repeat counts, sequences, motif annotations, and population frequency priors, and update it incrementally without rebuilding the graph.
+
+---
+
+## Key Features
+
+- **Pointer-node representation for STR loci**  
+  Avoids topological “hairball” expansion caused by explicitly embedding many STR alleles in graph structure.
+
+- **External allele registry**  
+  Stores allele sequences, repeat counts, motif information, and population frequencies outside the graph.
+
+- **Syncmer-based read localization**  
+  Uses flank-derived syncmer seeds for coarse mapping, chaining, and locus assignment.
+
+- **Motif-aware pHMM genotyping**  
+  Uses a profile hidden Markov model with repeat-aware indel modeling and forward likelihood computation for STR allele evaluation.
+
+- **Population-aware Bayesian inference**  
+  Combines allele-frequency priors with per-read likelihoods to infer maximum a posteriori diploid genotypes.
+
+- **GT / GQ output**  
+  Reports genotype calls and posterior-derived genotype quality.
+
+- **Incremental registry updates**  
+  Supports metadata-level updates for newly supported alleles without whole-graph reconstruction.
+
+- **Heterogeneity-aware design**  
+  The framework is designed to preserve evidence for broadened or non-diploid local STR signals (“multi-bubbles”).
+
+---
+
+## Repository Contents
+
+- `pgg_build.py`  
+  Build STR-PG graph (`.gfa`) from reference sequence, STR catalog, and optional VCF.
+
+- `pgg_index.py`  
+  Build syncmer/minimizer-style graph index for fast mapping.
+
+- `pgg_map_optimized.py`  
+  Map single-end or paired-end reads to the graph and output GAF alignments.
+
+- `pgg_genotype.py`  
+  Main STR genotyper using motif-aware pHMM likelihoods and population priors.
+
+- `pgg_update_freq.py`  
+  Update population frequency / registry support information from high-confidence genotype calls.
+
+- `pgg_genotype_hybrid_fast.py` *(optional, if included in your repo)*  
+  A speed-oriented hybrid version that uses fast candidate screening before pHMM refinement.
+
+- `pgg_genotype_str_fix2.py` *(optional / legacy / debug use)*  
+  Lightweight validation script for targeted or debugging workflows.
+
+---
 
 ## Requirements
 
 ### System
+- Linux / macOS
+- Python 3.9+
 
-* **OS**: Linux / macOS
-* **Python**: 3.9+
+### Python dependencies
 
-### Python Dependencies
-
-Install the required packages using pip:
+Install required packages:
 
 ```bash
 pip install pysam tqdm
-
-```
-
-* `pysam`: Required for VCF parsing in the build step.
-* `tqdm`: Required for progress bars during mapping.
-* Standard libraries used: `argparse`, `json`, `gzip`, `dbm`, `multiprocessing`, `pickle`, `struct`.
 
 ---
 
@@ -136,9 +199,13 @@ python pgg_map_optimized.py \
 ```
 * *Note: Use `--reads` for single-end sequencing.*
 
-### 4. Genotype STRs (`pgg_genotype.py`)
+### 4. Genotype STRs with motif-aware pHMM
 
-Performs the final genotyping using the Graph, Alignments (GAF), and raw reads.
+localizes reads to pointer-node loci using graph alignments
+retrieves candidate alleles from the registry
+computes per-read likelihoods with a motif-aware pHMM
+combines likelihoods with population priors
+outputs MAP genotype (GT) and genotype quality (GQ)
 
 **Command:**
 
@@ -152,21 +219,15 @@ python pgg_genotype.py \
     --out genotypes.tsv \
     --region chr19:40000000-50000000 \
     --popmix "EUR=0.6,AFR=0.4"
-
 ```
-
-* `--freq`: Population frequency file (JSONL format).
-* `--region`: (Optional) Limit genotyping to a specific genomic region for speed.
-* `--popmix`: (Optional) Specify admixture proportions for priors.
-
-The command to execute in the test_data folder is:
+Example in test_data
 ```bash
 python pgg_genotype.py \
     --gfa test_data/graph.gfa \
     --gaf test_data/sample1.gaf \
     --fq1 test_data/sample_1_R1.fastq.gz \
     --fq2 test_data/sample_1_R2.fastq.gz \
-    --freq freq_database.jsonl \
+    --freq freq19.jsonl \
     --out test_data/genotypes.tsv \
     --region chr19:40000000-50000000 \
     --popmix "EUR=0.6,AFR=0.4"
