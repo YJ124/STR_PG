@@ -1,0 +1,13 @@
+cff-version: 1.2.0
+message: "If you use STR-PG, please cite the associated manuscript and this software release."
+title: "STR-PG: pointer-graph short tandem repeat genotyping"
+type: software
+version: 2.0.0
+authors:
+  - family-names: Yuan
+    given-names: Jiajing
+  - family-names: Xue
+    given-names: Zhengfa
+  - family-names: Wang
+    given-names: Jiayin
+date-released: 2026-07-29

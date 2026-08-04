@@ -1,0 +1,2 @@
+pointer_id	chrom	start	end	motif	mapped_depth	depth	GT	GQ	allele1	allele2	posterior	log_likelihood	log_prior	log_score	log_mix	D_PAPER	D_LIKELIHOOD	heterogeneity_threshold	HET_FLAG	mixture_weights
+PTR_DEMO	chrDemo	451	480	CAG	36	36	10/12	16	10	12	0.9754958588	-31.39274398	-0.9694164825	-32.36216046	-31.39274419	1.938832552	0	.	.	"{""10"": 0.4234531674991638, ""12"": 0.5765468225008362}"

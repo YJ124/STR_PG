@@ -1,0 +1,21 @@
+likelihood_backend: sw
+read_selection_backend_independent: true
+use_population_frequency: true
+use_balding_nichols: true
+use_length_smoothing: true
+use_mixture_model: true
+
+smith_waterman:
+  match: 2
+  mismatch: -5
+  gap: -5
+  band: 500
+  temperature: 12
+
+phmm:
+  status: optional_experimental
+  mismatch_rate: 0.01
+  flank_indel_open: 0.003
+  flank_indel_extension: 0.10
+  repeat_indel_open: 0.005
+  repeat_indel_extension: 0.30
